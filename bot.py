@@ -1,6 +1,7 @@
 import nextcord
 from nextcord.ext import commands
 import os
+from utils.vehicleUtils import *
 
 intents = nextcord.Intents.all()
 bot = commands.Bot(command_prefix="!")
@@ -21,5 +22,6 @@ for filename in os.listdir('./modules'):
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user} | Loaded {loaded_count}/{total_count} Modules")
+    sendTrustToFivem()
 
 bot.run("MTMwNDc3MTc1OTQwNDIyNDU1Mg.GB9cKe.LtEMB3wUDTTS-_PuzxiTFrbE6wywbCVXu_r5iM")

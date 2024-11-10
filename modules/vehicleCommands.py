@@ -10,8 +10,10 @@ config.read('config.ini')
 
 
 class ConfirmView(View):
-    def __init__(self):
+    def __init__(self, user, slot_type):
         super().__init__(timeout=None)
+        self.user = user
+        self.slot_type = slot_type
 
         # Confirm Button
         self.confirm_button = Button(label="Confirm", style=nextcord.ButtonStyle.green)
@@ -24,18 +26,27 @@ class ConfirmView(View):
         self.add_item(self.deny_button)
 
     async def confirm(self, interaction: nextcord.Interaction):
+        # Disable buttons after confirmation
         self.confirm_button.disabled = True
         self.deny_button.disabled = True
         self.confirm_button.label = f"Confirmed by: {interaction.user}"
         await interaction.response.edit_message(view=self)
-        await interaction.send("You confirmed!", ephemeral=True)
+
+        # Register the vehicle when confirmed
+        registerVehicle(self.user.id, self.slot_type, "other")
+
+        # Send a direct message (ephemeral) to the original user
+        await self.user.send(f"Your {self.slot_type} slot registration has been successfully confirmed!")
 
     async def deny(self, interaction: nextcord.Interaction):
+        # Disable buttons after denial
         self.confirm_button.disabled = True
         self.deny_button.disabled = True
-        self.confirm_button.label = f"Denied by: {interaction.user}"
+        self.deny_button.label = f"Denied by: {interaction.user}"
         await interaction.response.edit_message(view=self)
-        await interaction.send("You denied!", ephemeral=True)
+
+        # Send a direct message (ephemeral) to the original user
+        await self.user.send(f"Your {self.slot_type} slot registration has been denied.")
 
 class VehicleCommands(commands.Cog):
     def __init__(self, bot):
@@ -43,7 +54,7 @@ class VehicleCommands(commands.Cog):
 
     async def alert(self, type, message, view=False):
         channel = await self.bot.fetch_channel(config.getint('logchannel', type))
-        vview = ConfirmView() if view else None
+        vview = view=view if view else None
         await channel.send(message, view=vview)
 
     @nextcord.slash_command("vehicle")
@@ -67,13 +78,15 @@ class VehicleCommands(commands.Cog):
             message = message.format(user=ctx.user, slot_type=slot_type, payment_proof=payment_proof, screenshot_payment_proof=screenshot_payment_proof).replace(r'\n', '\n')
             await self.alert("alert", message)
             # register the vehicle here:
-            registerVehicle(ctx.user.id, slot_type)
+            registerVehicle(ctx.user.id, slot_type, payment_proof)
+            # instead of ctx.send it would be the user that originally ran this commanddd
             await ctx.send(f"You have succesfully registered a {slot_type} slot", ephemeral=True)
             return
 
         message = config.get('lang', "other_proof")
         message = message.format(user=ctx.user, slot_type=slot_type, screenshot_payment_proof=screenshot_payment_proof).replace(r'\n', '\n')
-        await self.alert("sale", message, view=True)
+        confirm_view = ConfirmView(user=ctx.user, slot_type=slot_type)
+        await self.alert("sale", message, view=confirm_view)
 
     @vehicle.subcommand("slot")
     async def slot(self, ctx: nextcord.Interaction):
@@ -81,19 +94,99 @@ class VehicleCommands(commands.Cog):
 
     @slot.subcommand("list", "List all vehicles I own")
     async def slot_list(self, ctx: nextcord.Interaction, user: nextcord.Member = nextcord.SlashOption(description="Select the user you want to view slots for", required=False)):
-        pass
-    
-    @slot.subcommand("view", "View a specific vehicle slot")
-    async def slot_list(self, ctx: nextcord.Interaction, slot: str = nextcord.SlashOption(description="Select the slot you want to view", autocomplete=True)):
-        await ctx.send("debug")
+        if not user:
+            user = ctx.user
+        vehicles = getAllUserVehicles(user)  # Retrieve the list of vehicles for the user
+        
 
-    @slot_list.on_autocomplete("slot")
-    async def slot_list_autocomplete(self, interaction: nextcord.Interaction, slot: str):
-        vehicles = getAllUserVehicles(interaction)
-        print(vehicles)
+        embed = nextcord.Embed(title=f"Vehicles owned by {user.name}", description="Here are all the vehicles you own.", color=nextcord.Color.blue())
+        
+        if vehicles:
+            for vehicle in vehicles:
+                spawncode, owner_id, type, file_link, payment, status = vehicle
+                
+                embed.add_field(
+                    name=f"Vehicle {type} | {spawncode or 'No Spawncode'}",
+                    value=f"**Status:** {status or 'Unknown'}",
+                    inline=False
+                )
+        else:
+            embed.add_field(
+                name="No vehicles found",
+                value="You do not own any vehicles.",
+                inline=False
+            )
+
+        await ctx.send(embed=embed, ephemeral=True)
+
+    @slot.subcommand("view", "View a specific vehicle slot")
+    async def slot_view(self, ctx: nextcord.Interaction, slot: str = nextcord.SlashOption(description="Select the slot you want to view", autocomplete=True)):
+        vehicles = getAllUserVehicles(ctx.user)
+        
+        selected_vehicle = None
+        for vehicle in vehicles:
+            vehicle_str = f"{vehicle[2]} | {vehicle[0]}" if vehicle[0] is not None else f"{vehicle[2]} | No Spawncode"
+            if slot == vehicle_str:
+                selected_vehicle = vehicle
+                break
+        
+        if selected_vehicle:
+            print(selected_vehicle)
+            spawncode, owner_id, type, file_link, payment, status, trust, ace, friend_slots, locked = selected_vehicle
+            embed = nextcord.Embed(
+                title=f"Vehicle Details - {type}",
+                description=f"Details for the selected {type} vehicle.",
+                color=nextcord.Color.green()
+            )
+            embed.add_field(name="Owner ID", value=str(owner_id), inline=False)
+            embed.add_field(name="Spawncode", value=spawncode if spawncode else "No Spawncode", inline=False)
+            embed.add_field(name="File Link", value=file_link if file_link else "No File Link", inline=False)
+            embed.add_field(name="Status", value=status if status else "Unknown", inline=False)
+            
+            await ctx.send(embed=embed)
+        else:
+            await ctx.send("No vehicle found for that slot.")
+
+    @slot_view.on_autocomplete("slot")
+    async def slot_view_autocomplete(self, interaction: nextcord.Interaction, slot: str):
+        vehicles = getAllUserVehicles(interaction.user)
+
         choices = [f"{vehicle[2]} | {vehicle[0]}" if vehicle[0] is not None else f"{vehicle[2]} | No Spawncode" for vehicle in vehicles]
+
         await interaction.response.send_autocomplete(choices)
 
-    
+
+    @vehicle.subcommand("trust")
+    async def trust(self, ctx: nextcord.Interaction):
+        pass
+
+    @trust.subcommand("purchasefriendslot", "Purchase an additional friend slot for a vehicle slot ($10.00 USD)")
+    async def purchasefriendslot(self, ctx: nextcord.Interaction, slot: str = nextcord.SlashOption(description="Slot you are purchasing a friend slot for")):
+        pass
+
+    @trust.subcommand("setfriend", "Add a friend to a vehicle slot")
+    async def setfriend(self, ctx: nextcord.Interaction, slot: str = nextcord.SlashOption(description="Select the slot you are adding a friend to"), friend: nextcord.Member = nextcord.SlashOption(description="Select the friend you are adding")):
+        vehicles = getAllUserVehicles(ctx.user)
+        
+        selected_vehicle = None
+        for vehicle in vehicles:
+            vehicle_str = f"{vehicle[2]} | {vehicle[0]}" if vehicle[0] is not None else f"{vehicle[2]} | No Spawncode"
+            if slot == vehicle_str:
+                selected_vehicle = vehicle
+                break
+
+        if selected_vehicle:
+            spawncode, owner_id, type, file_link, payment, status, trust, ace, friend_slots, locked = selected_vehicle
+            addFriend(selected_vehicle, friend.id)
+            await ctx.send(f"Succesfully added {friend.mention} as a friend to your {type} vehicle {spawncode}")
+
+
+    @setfriend.on_autocomplete("slot")
+    async def setfriend_autocomplete(self, interaction: nextcord.Interaction, slot: str):
+        vehicles = getAllUserVehicles(interaction.user)
+
+        choices = [f"{vehicle[2]} | {vehicle[0]}" if vehicle[0] is not None else f"{vehicle[2]} | No Spawncode" for vehicle in vehicles]
+
+        await interaction.response.send_autocomplete(choices)
 def setup(bot):
     bot.add_cog(VehicleCommands(bot))
