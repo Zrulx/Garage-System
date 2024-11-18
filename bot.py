@@ -24,4 +24,4 @@ async def on_ready():
     print(f"Logged in as {bot.user} | Loaded {loaded_count}/{total_count} Modules")
     sendTrustToFivem()
 
-bot.run("MTMwNDc3MTc1OTQwNDIyNDU1Mg.GB9cKe.LtEMB3wUDTTS-_PuzxiTFrbE6wywbCVXu_r5iM")
+bot.run("TOKEN")
